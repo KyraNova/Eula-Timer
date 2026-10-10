@@ -8,6 +8,9 @@ from typing import Any, Callable, Dict, Optional, Set
 
 from .config import load_config, save_config
 from .notifier import (
+    notify_bedtime,
+    notify_bedtime_advance,
+    notify_bedtime_overdue,
     notify_break_ended,
     notify_prayer_advance,
     notify_prayer_time,
@@ -21,6 +24,28 @@ class TimerMode(Enum):
     SHORT_BREAK = "Istirahat Pendek"
     LONG_BREAK = "Istirahat Panjang"
 
+
+
+def get_bedtime_diff(bedtime_str: str, now: datetime.datetime) -> tuple[datetime.datetime, int]:
+    """Menghitung target waktu tidur terdekat dan selisih detik ke target."""
+    try:
+        parts = bedtime_str.strip().split(":")
+        bh, bm = int(parts[0]), int(parts[1])
+    except Exception:
+        bh, bm = 22, 0
+
+    target = now.replace(hour=bh, minute=bm, second=0, microsecond=0)
+    diff = int((target - now).total_seconds())
+
+    # Jika selisih negatif lebih dari 4 jam, asumsikan target berikutnya adalah besok
+    if diff < -4 * 3600:
+        target += datetime.timedelta(days=1)
+        diff = int((target - now).total_seconds())
+    elif diff > 20 * 3600:
+        target -= datetime.timedelta(days=1)
+        diff = int((target - now).total_seconds())
+
+    return target, diff
 
 class TimerEngine:
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -54,11 +79,20 @@ class TimerEngine:
         self.notified_advance: Set[str] = set()
         self.notified_exact: Set[str] = set()
 
+
+        # Bedtime configuration
+        self.bedtime: str = str(self.config.get("bedtime", "22:00"))
+        self.bedtime_enabled: bool = bool(self.config.get("bedtime_enabled", True))
+        self.bedtime_reminders: list[int] = list(self.config.get("bedtime_reminders", [30, 20, 10, 5]))
+        self.bedtime_target: Optional[datetime.datetime] = None
+        self.bedtime_diff: Optional[int] = None
+        self.notified_bedtime: Set[str] = set()
         self.log_messages: list[str] = []
         self._last_day: datetime.date = datetime.date.today()
 
         # Inisialisasi awal jadwal sholat
         self.refresh_prayer_times()
+        self._update_bedtime()
 
     def log(self, msg: str) -> None:
         """Menambahkan pesan status / event."""
@@ -174,6 +208,47 @@ class TimerEngine:
         self.refresh_prayer_times(force=True)
         self.log(f"Kota diubah ke: {self.city}.")
 
+    def _update_bedtime(self) -> None:
+        """Menghitung target dan selisih waktu tidur."""
+        if not self.bedtime_enabled:
+            self.bedtime_target = None
+            self.bedtime_diff = None
+            return
+        now = datetime.datetime.now()
+        target, diff = get_bedtime_diff(self.bedtime, now)
+        self.bedtime_target = target
+        self.bedtime_diff = diff
+
+    def set_bedtime(self, new_time: str) -> bool:
+        """Mengatur jam tidur (format HH:MM)."""
+        try:
+            parts = new_time.strip().split(":")
+            if len(parts) != 2:
+                return False
+            h, m = int(parts[0]), int(parts[1])
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                return False
+            self.bedtime = f"{h:02d}:{m:02d}"
+            self.bedtime_enabled = True
+            self.config["bedtime"] = self.bedtime
+            self.config["bedtime_enabled"] = True
+            save_config(self.config)
+            self.notified_bedtime.clear()
+            self._update_bedtime()
+            self.log(f"Jam tidur diatur ke: {self.bedtime}.")
+            return True
+        except Exception:
+            return False
+
+    def toggle_bedtime(self) -> None:
+        """Toggle status aktif/nonaktif pengingat jam tidur."""
+        self.bedtime_enabled = not self.bedtime_enabled
+        self.config["bedtime_enabled"] = self.bedtime_enabled
+        save_config(self.config)
+        self._update_bedtime()
+        status = "AKTIF" if self.bedtime_enabled else "NONAKTIF"
+        self.log(f"Pengingat jam tidur ({self.bedtime}): {status}.")
+
     def tick(self) -> None:
         """Dipanggil setiap 1 detik oleh runner/event loop."""
         now = datetime.datetime.now()
@@ -183,6 +258,7 @@ class TimerEngine:
             self._last_day = now.date()
             self.notified_advance.clear()
             self.notified_exact.clear()
+            self.notified_bedtime.clear()
             self.refresh_prayer_times(force=True)
 
         # 1. Update perhitungan sholat
@@ -218,6 +294,55 @@ class TimerEngine:
                 )
                 self.log(f"Waktu sholat {self.next_prayer_name} telah tiba!")
 
+
+        # 2. Update jam tidur & evaluasi pengingat
+        if self.bedtime_enabled:
+            self._update_bedtime()
+            if self.bedtime_target is not None and self.bedtime_diff is not None:
+                t_date_str = self.bedtime_target.date().isoformat()
+                diff = self.bedtime_diff
+
+                # 2a. Peringatan mendekati jam tidur (misal 30m, 20m, 10m, 5m)
+                for rem_min in sorted(self.bedtime_reminders, reverse=True):
+                    rem_sec = rem_min * 60
+                    if rem_sec - 90 <= diff <= rem_sec:
+                        key = f"{t_date_str}:bedtime:{rem_min}m"
+                        if key not in self.notified_bedtime:
+                            self.notified_bedtime.add(key)
+                            notify_bedtime_advance(
+                                minutes_left=rem_min,
+                                bedtime_str=self.bedtime,
+                                sound_enabled=self.sound_enabled,
+                                notify_enabled=self.notify_enabled,
+                            )
+                            self.log(f"Pengingat Tidur: Jam {self.bedtime} dalam {rem_min} menit!")
+
+                # 2b. Peringatan tepat saat jam tidur tiba
+                if -90 <= diff <= 0:
+                    exact_key = f"{t_date_str}:bedtime:exact"
+                    if exact_key not in self.notified_bedtime:
+                        self.notified_bedtime.add(exact_key)
+                        notify_bedtime(
+                            bedtime_str=self.bedtime,
+                            sound_enabled=self.sound_enabled,
+                            notify_enabled=self.notify_enabled,
+                        )
+                        self.log(f"Waktu tidur telah tiba! ({self.bedtime})")
+
+                # 2c. Peringatan jika begadang lewat jam tidur (30 menit dan 60 menit lewat)
+                for over_min in [30, 60]:
+                    over_sec = -over_min * 60
+                    if over_sec - 90 <= diff <= over_sec:
+                        over_key = f"{t_date_str}:bedtime:overdue_{over_min}m"
+                        if over_key not in self.notified_bedtime:
+                            self.notified_bedtime.add(over_key)
+                            notify_bedtime_overdue(
+                                minutes_late=over_min,
+                                bedtime_str=self.bedtime,
+                                sound_enabled=self.sound_enabled,
+                                notify_enabled=self.notify_enabled,
+                            )
+                            self.log(f"Peringatan Begadang: Lewat {over_min}m dari jam {self.bedtime}!")
         # 2. Update timer belajar / istirahat
         if self.is_running:
             self.remaining_seconds -= 1

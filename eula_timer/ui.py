@@ -30,6 +30,7 @@ class EulaTimerUI:
     def __init__(self, engine: TimerEngine):
         self.engine = engine
         self.input_mode: bool = False
+        self.input_action: str = ""
         self.input_buffer: str = ""
         self.input_prompt: str = ""
 
@@ -127,12 +128,23 @@ class EulaTimerUI:
                     if ch in (10, 13):  # Enter
                         val = self.input_buffer.strip()
                         if val:
-                            self.engine.set_city(val)
+                            if self.input_action == "city":
+                                self.engine.set_city(val)
+                            elif self.input_action == "bedtime":
+                                if val.lower() in ("off", "nonaktif", "disable"):
+                                    if self.engine.bedtime_enabled:
+                                        self.engine.toggle_bedtime()
+                                else:
+                                    ok = self.engine.set_bedtime(val)
+                                    if not ok:
+                                        self.engine.log("Format jam tidur salah! Gunakan HH:MM (contoh: 22:00).")
                         self.input_mode = False
+                        self.input_action = ""
                         self.input_buffer = ""
                         curses.curs_set(0)
                     elif ch == 27:  # ESC
                         self.input_mode = False
+                        self.input_action = ""
                         self.input_buffer = ""
                         curses.curs_set(0)
                     elif ch in (curses.KEY_BACKSPACE, 127, 8):
@@ -162,9 +174,18 @@ class EulaTimerUI:
                         self.engine.toggle_notify()
                     elif ch in (ord("c"), ord("C")):
                         self.input_mode = True
+                        self.input_action = "city"
                         self.input_buffer = ""
                         self.input_prompt = "Masukkan Nama Kota: "
                         curses.curs_set(1)
+                    elif ch == ord("t"):
+                        self.input_mode = True
+                        self.input_action = "bedtime"
+                        self.input_buffer = ""
+                        self.input_prompt = "Atur Jam Tidur (HH:MM, ketik 'off' untuk nonaktifkan): "
+                        curses.curs_set(1)
+                    elif ch == ord("T"):
+                        self.engine.toggle_bedtime()
                     elif ch in (ord("f"), ord("F")):
                         self.engine.refresh_prayer_times(force=True)
 
@@ -194,9 +215,10 @@ class EulaTimerUI:
         sound_status = "ON" if self.engine.sound_enabled else "OFF"
         notify_status = "ON" if self.engine.notify_enabled else "OFF"
         clock_str = datetime.datetime.now().strftime("%H:%M:%S")
+        bed_status = self.engine.bedtime if self.engine.bedtime_enabled else "OFF"
         status_line = (
             f" Lokasi: {self.engine.city} ({'Online' if self.engine.is_online else 'Offline'}) | "
-            f"Suara: {sound_status} [m] | Notif: {notify_status} [n] | Jam: {clock_str} "
+            f"Tidur: {bed_status} [t] | Suara: {sound_status} [m] | Notif: {notify_status} [n] | Jam: {clock_str} "
         )
         self._safe_addstr(stdscr, 1, 2, status_line, c_cyan)
 
@@ -326,6 +348,33 @@ class EulaTimerUI:
         else:
             self._safe_addstr(stdscr, py_row, rx + 3, f"Waktu {self.engine.next_prayer_name} Tiba!", c_yellow | curses.A_BOLD)
 
+        # Countdown jam tidur
+        if self.engine.bedtime_enabled and self.engine.bedtime_diff is not None:
+            py_row += 1
+            if py_row + 2 < panel_y + panel_height:
+                self._safe_addstr(stdscr, py_row, rx + 3, "─" * (right_panel_width - 6), c_blue)
+                py_row += 1
+                b_diff = self.engine.bedtime_diff
+                if b_diff > 0:
+                    bh = b_diff // 3600
+                    bm = (b_diff % 3600) // 60
+                    bs = b_diff % 60
+                    if bh > 0:
+                        bt_str = f"{bh}j {bm}m lagi"
+                    else:
+                        bt_str = f"{bm}m {bs}s lagi"
+                    cd_color = c_yellow | curses.A_BOLD if b_diff <= 1800 else c_white
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Tidur ({self.engine.bedtime}):", c_yellow)
+                    py_row += 1
+                    self._safe_addstr(stdscr, py_row, rx + 3, f">> {bt_str}", cd_color)
+                elif b_diff >= -3600:
+                    late_m = max(1, abs(b_diff) // 60)
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Waktu Tidur! ({self.engine.bedtime})", c_red | curses.A_BOLD)
+                    py_row += 1
+                    self._safe_addstr(stdscr, py_row, rx + 3, f">> Lewat {late_m}m! Segera tidur", c_red)
+                else:
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Jam Tidur: {self.engine.bedtime}", c_white)
+
         # Status log di bawah panel
         log_y = panel_y + panel_height
         if log_y < max_y - 2:
@@ -346,8 +395,8 @@ class EulaTimerUI:
             # Petunjuk Tombol (Hotkeys)
             help_y = max_y - 2
             help_text = (
-                "[Spasi] Mulai/Jeda  [r] Reset  [s] Skip  [+/-] Durasi Belajar  "
-                "[b/B] Istirahat  [c] Ganti Kota  [f] Refresh  [q] Keluar"
+                "[Spasi] Mulai/Jeda  [r] Reset  [s] Skip  [+/-] Belajar  "
+                "[b/B] Istirahat  [t/T] Jam Tidur  [c] Kota  [q] Keluar"
             )
             self._safe_addstr(stdscr, help_y, 2, help_text, c_mag)
 

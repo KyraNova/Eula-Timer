@@ -16,6 +16,8 @@ SOUND_MAP = {
     "prayer": "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
     "prayer_advance": "/usr/share/sounds/freedesktop/stereo/dialog-information.oga",
     "bell": "/usr/share/sounds/freedesktop/stereo/bell.oga",
+    "bedtime": "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
+    "bedtime_advance": "/usr/share/sounds/freedesktop/stereo/message.oga",
 }
 
 
@@ -144,3 +146,81 @@ def notify_prayer_advance(
         enabled=notify_enabled,
     )
     play_sound("prayer_advance", enabled=sound_enabled)
+
+
+def notify_bedtime_advance(
+    minutes_left: int,
+    bedtime_str: str = "22:00",
+    sound_enabled: bool = True,
+    notify_enabled: bool = True,
+) -> None:
+    """Dipanggil beberapa menit menjelang jam tidur (30m, 20m, 10m, dll)."""
+    messages = {
+        30: (
+            f"Waktu tidur ({bedtime_str}) tersisa 30 menit lagi! "
+            "Selesaikan tugasmu sekarang dan jangan coba-coba begadang, atau dendam ini akan kuingat!"
+        ),
+        20: (
+            f"Tinggal 20 menit menuju jam tidur ({bedtime_str})! "
+            "Rapikan pekerjaanmu dan bersiaplah tidur. Menjaga kebugaran adalah disiplin dasar seorang ksatria."
+        ),
+        10: (
+            f"Hanya tersisa 10 menit sebelum jam tidur ({bedtime_str})! "
+            "Segera simpan berkasmu dan matikan layar. Ini peringatan serius dari Kapten Reconnaissance Company!"
+        ),
+        5: (
+            f"5 menit lagi menuju jam tidur ({bedtime_str})! "
+            "Tutup komputermu sekarang juga dan beranjak ke kasur. Jangan buat aku harus turun tangan!"
+        ),
+    }
+    msg = messages.get(
+        minutes_left,
+        f"Waktu tidur ({bedtime_str}) tinggal {minutes_left} menit lagi! Segera selesaikan aktivitasmu dan bersiaplah istirahat.",
+    )
+    send_notification(
+        title=f"❄️ Pengingat Tidur: {minutes_left} Menit Lagi ({bedtime_str})",
+        message=msg,
+        urgency="normal" if minutes_left > 10 else "critical",
+        icon="weather-clear-night",
+        enabled=notify_enabled,
+    )
+    play_sound("bedtime_advance", enabled=sound_enabled)
+
+
+def notify_bedtime(
+    bedtime_str: str = "22:00",
+    sound_enabled: bool = True,
+    notify_enabled: bool = True,
+) -> None:
+    """Dipanggil tepat saat jam tidur tiba (jam 10 malam / 22:00)."""
+    send_notification(
+        title=f"❄️ Waktu Tidur Telah Tiba! ({bedtime_str})",
+        message=(
+            f"Sudah pukul {bedtime_str}! Hentikan semua kegiatan, matikan layar, dan segera tidur sekarang! "
+            "Kalau kamu sakit karena kurang tidur, siapa yang akan membalas dendamku nanti?!"
+        ),
+        urgency="critical",
+        icon="weather-clear-night",
+        enabled=notify_enabled,
+    )
+    play_sound("bedtime", enabled=sound_enabled)
+
+
+def notify_bedtime_overdue(
+    minutes_late: int,
+    bedtime_str: str = "22:00",
+    sound_enabled: bool = True,
+    notify_enabled: bool = True,
+) -> None:
+    """Dipanggil jika masih aktif setelah jam tidur terlewati."""
+    send_notification(
+        title=f"❄️ Peringatan: Sudah Lewat Jam Tidur! (+{minutes_late}m)",
+        message=(
+            f"Kamu masih belum tidur padahal sudah lewat {minutes_late} menit dari jam {bedtime_str}?! "
+            "Kelancangan ini tidak bisa ditolerir... Cepat tidur sekarang juga, atau dendam ini sungguh akan kuingat!"
+        ),
+        urgency="critical",
+        icon="weather-clear-night",
+        enabled=notify_enabled,
+    )
+    play_sound("bedtime", enabled=sound_enabled)
