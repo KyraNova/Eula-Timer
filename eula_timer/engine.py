@@ -14,6 +14,9 @@ from .notifier import (
     notify_break_ended,
     notify_prayer_advance,
     notify_prayer_time,
+    notify_study_end,
+    notify_study_end_advance,
+    notify_study_end_overdue,
     notify_work_ended,
 )
 from .prayer import get_next_prayer, get_prayer_times
@@ -35,6 +38,27 @@ def get_bedtime_diff(bedtime_str: str, now: datetime.datetime) -> tuple[datetime
         bh, bm = 22, 0
 
     target = now.replace(hour=bh, minute=bm, second=0, microsecond=0)
+    diff = int((target - now).total_seconds())
+
+    # Jika selisih negatif lebih dari 4 jam, asumsikan target berikutnya adalah besok
+    if diff < -4 * 3600:
+        target += datetime.timedelta(days=1)
+        diff = int((target - now).total_seconds())
+    elif diff > 20 * 3600:
+        target -= datetime.timedelta(days=1)
+        diff = int((target - now).total_seconds())
+
+    return target, diff
+
+def get_study_end_diff(study_end_str: str, now: datetime.datetime) -> tuple[datetime.datetime, int]:
+    """Menghitung target waktu selesai belajar terdekat dan selisih detik ke target."""
+    try:
+        parts = study_end_str.strip().split(":")
+        sh, sm = int(parts[0]), int(parts[1])
+    except Exception:
+        sh, sm = 17, 0
+
+    target = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
     diff = int((target - now).total_seconds())
 
     # Jika selisih negatif lebih dari 4 jam, asumsikan target berikutnya adalah besok
@@ -80,6 +104,14 @@ class TimerEngine:
         self.notified_exact: Set[str] = set()
 
 
+        # Study end configuration (Jadwal selesai belajar)
+        self.study_end_time: str = str(self.config.get("study_end_time", "17:00"))
+        self.study_end_enabled: bool = bool(self.config.get("study_end_enabled", True))
+        self.study_end_reminders: list[int] = list(self.config.get("study_end_reminders", [30, 15, 5]))
+        self.study_end_target: Optional[datetime.datetime] = None
+        self.study_end_diff: Optional[int] = None
+        self.notified_study_end: Set[str] = set()
+
         # Bedtime configuration
         self.bedtime: str = str(self.config.get("bedtime", "22:00"))
         self.bedtime_enabled: bool = bool(self.config.get("bedtime_enabled", True))
@@ -93,6 +125,7 @@ class TimerEngine:
         # Inisialisasi awal jadwal sholat
         self.refresh_prayer_times()
         self._update_bedtime()
+        self._update_study_end()
 
     def log(self, msg: str) -> None:
         """Menambahkan pesan status / event."""
@@ -208,6 +241,47 @@ class TimerEngine:
         self.refresh_prayer_times(force=True)
         self.log(f"Kota diubah ke: {self.city}.")
 
+    def _update_study_end(self) -> None:
+        """Menghitung target dan selisih waktu selesai belajar."""
+        if not self.study_end_enabled:
+            self.study_end_target = None
+            self.study_end_diff = None
+            return
+        now = datetime.datetime.now()
+        target, diff = get_study_end_diff(self.study_end_time, now)
+        self.study_end_target = target
+        self.study_end_diff = diff
+
+    def set_study_end(self, new_time: str) -> bool:
+        """Mengatur jam selesai belajar (format HH:MM)."""
+        try:
+            parts = new_time.strip().split(":")
+            if len(parts) != 2:
+                return False
+            h, m = int(parts[0]), int(parts[1])
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                return False
+            self.study_end_time = f"{h:02d}:{m:02d}"
+            self.study_end_enabled = True
+            self.config["study_end_time"] = self.study_end_time
+            self.config["study_end_enabled"] = True
+            save_config(self.config)
+            self.notified_study_end.clear()
+            self._update_study_end()
+            self.log(f"Jam selesai belajar diatur ke: {self.study_end_time}.")
+            return True
+        except Exception:
+            return False
+
+    def toggle_study_end(self) -> None:
+        """Toggle status aktif/nonaktif pengingat jam selesai belajar."""
+        self.study_end_enabled = not self.study_end_enabled
+        self.config["study_end_enabled"] = self.study_end_enabled
+        save_config(self.config)
+        self._update_study_end()
+        status = "AKTIF" if self.study_end_enabled else "NONAKTIF"
+        self.log(f"Pengingat selesai belajar ({self.study_end_time}): {status}.")
+
     def _update_bedtime(self) -> None:
         """Menghitung target dan selisih waktu tidur."""
         if not self.bedtime_enabled:
@@ -259,6 +333,7 @@ class TimerEngine:
             self.notified_advance.clear()
             self.notified_exact.clear()
             self.notified_bedtime.clear()
+            self.notified_study_end.clear()
             self.refresh_prayer_times(force=True)
 
         # 1. Update perhitungan sholat
@@ -343,6 +418,55 @@ class TimerEngine:
                                 notify_enabled=self.notify_enabled,
                             )
                             self.log(f"Peringatan Begadang: Lewat {over_min}m dari jam {self.bedtime}!")
+
+        # 3. Update jam selesai belajar & evaluasi pengingat
+        if self.study_end_enabled:
+            self._update_study_end()
+            if self.study_end_target is not None and self.study_end_diff is not None:
+                t_date_str = self.study_end_target.date().isoformat()
+                diff = self.study_end_diff
+
+                # 3a. Peringatan mendekati jam selesai belajar (misal 30m, 15m, 5m)
+                for rem_min in sorted(self.study_end_reminders, reverse=True):
+                    rem_sec = rem_min * 60
+                    if rem_sec - 90 <= diff <= rem_sec:
+                        key = f"{t_date_str}:study_end:{rem_min}m"
+                        if key not in self.notified_study_end:
+                            self.notified_study_end.add(key)
+                            notify_study_end_advance(
+                                minutes_left=rem_min,
+                                study_end_str=self.study_end_time,
+                                sound_enabled=self.sound_enabled,
+                                notify_enabled=self.notify_enabled,
+                            )
+                            self.log(f"Pengingat Belajar: Jam {self.study_end_time} dalam {rem_min} menit!")
+
+                # 3b. Peringatan tepat saat jam selesai belajar tiba
+                if -90 <= diff <= 0:
+                    exact_key = f"{t_date_str}:study_end:exact"
+                    if exact_key not in self.notified_study_end:
+                        self.notified_study_end.add(exact_key)
+                        notify_study_end(
+                            study_end_str=self.study_end_time,
+                            sound_enabled=self.sound_enabled,
+                            notify_enabled=self.notify_enabled,
+                        )
+                        self.log(f"Waktu belajar selesai! ({self.study_end_time})")
+
+                # 3c. Peringatan jika masih aktif belajar lewat batas waktu (15m dan 30m)
+                for over_min in [15, 30]:
+                    over_sec = -over_min * 60
+                    if over_sec - 90 <= diff <= over_sec:
+                        over_key = f"{t_date_str}:study_end:overdue_{over_min}m"
+                        if over_key not in self.notified_study_end:
+                            self.notified_study_end.add(over_key)
+                            notify_study_end_overdue(
+                                minutes_late=over_min,
+                                study_end_str=self.study_end_time,
+                                sound_enabled=self.sound_enabled,
+                                notify_enabled=self.notify_enabled,
+                            )
+                            self.log(f"Peringatan Lembur: Lewat {over_min}m dari jam {self.study_end_time}!")
         # 2. Update timer belajar / istirahat
         if self.is_running:
             self.remaining_seconds -= 1

@@ -130,6 +130,14 @@ class EulaTimerUI:
                         if val:
                             if self.input_action == "city":
                                 self.engine.set_city(val)
+                            elif self.input_action == "study_end":
+                                if val.lower() in ("off", "nonaktif", "disable"):
+                                    if self.engine.study_end_enabled:
+                                        self.engine.toggle_study_end()
+                                else:
+                                    ok = self.engine.set_study_end(val)
+                                    if not ok:
+                                        self.engine.log("Format jam selesai belajar salah! Gunakan HH:MM (contoh: 17:00).")
                             elif self.input_action == "bedtime":
                                 if val.lower() in ("off", "nonaktif", "disable"):
                                     if self.engine.bedtime_enabled:
@@ -178,6 +186,14 @@ class EulaTimerUI:
                         self.input_buffer = ""
                         self.input_prompt = "Masukkan Nama Kota: "
                         curses.curs_set(1)
+                    elif ch == ord("e"):
+                        self.input_mode = True
+                        self.input_action = "study_end"
+                        self.input_buffer = ""
+                        self.input_prompt = "Atur Jam Selesai Belajar (HH:MM, ketik 'off' untuk nonaktifkan): "
+                        curses.curs_set(1)
+                    elif ch == ord("E"):
+                        self.engine.toggle_study_end()
                     elif ch == ord("t"):
                         self.input_mode = True
                         self.input_action = "bedtime"
@@ -215,10 +231,11 @@ class EulaTimerUI:
         sound_status = "ON" if self.engine.sound_enabled else "OFF"
         notify_status = "ON" if self.engine.notify_enabled else "OFF"
         clock_str = datetime.datetime.now().strftime("%H:%M:%S")
+        study_status = self.engine.study_end_time if self.engine.study_end_enabled else "OFF"
         bed_status = self.engine.bedtime if self.engine.bedtime_enabled else "OFF"
         status_line = (
             f" Lokasi: {self.engine.city} ({'Online' if self.engine.is_online else 'Offline'}) | "
-            f"Tidur: {bed_status} [t] | Suara: {sound_status} [m] | Notif: {notify_status} [n] | Jam: {clock_str} "
+            f"Selesai: {study_status} [e] | Tidur: {bed_status} [t] | Suara: {sound_status} [m] | Notif: {notify_status} [n] | Jam: {clock_str} "
         )
         self._safe_addstr(stdscr, 1, 2, status_line, c_cyan)
 
@@ -293,11 +310,12 @@ class EulaTimerUI:
             f"Selesai: {self.engine.completed_pomodoros} sesi ({pomo_icons})",
             c_mag,
         )
+        target_end_str = f"Selesai {self.engine.study_end_time}" if self.engine.study_end_enabled else "Selesai OFF"
         self._safe_addstr(
             stdscr,
             stats_y + 1,
             6,
-            f"Pengaturan: Belajar {self.engine.work_duration_minutes}m | Istirahat {self.engine.break_duration_minutes}m",
+            f"Pengaturan: Belajar {self.engine.work_duration_minutes}m | Istirahat {self.engine.break_duration_minutes}m | {target_end_str}",
             c_white,
         )
 
@@ -348,33 +366,63 @@ class EulaTimerUI:
         else:
             self._safe_addstr(stdscr, py_row, rx + 3, f"Waktu {self.engine.next_prayer_name} Tiba!", c_yellow | curses.A_BOLD)
 
-        # Countdown jam tidur
+        # Target Countdown (Selesai Belajar & Jam Tidur)
+        targets_to_show = []
+        if self.engine.study_end_enabled and self.engine.study_end_diff is not None:
+            targets_to_show.append(("study_end", self.engine.study_end_diff, self.engine.study_end_time))
         if self.engine.bedtime_enabled and self.engine.bedtime_diff is not None:
+            targets_to_show.append(("bedtime", self.engine.bedtime_diff, self.engine.bedtime))
+
+        # Urutkan: target yang belum lewat (diff > 0) terdekat lebih dulu, lalu yang sudah lewat
+        def target_sort_key(item: tuple[str, int, str]) -> tuple[int, int]:
+            _, diff, _ = item
+            if diff > 0:
+                return (0, diff)
+            return (1, -diff)
+
+        targets_to_show.sort(key=target_sort_key)
+
+        for t_type, diff, t_str in targets_to_show:
+            if py_row + 3 >= panel_y + panel_height:
+                break
             py_row += 1
-            if py_row + 2 < panel_y + panel_height:
-                self._safe_addstr(stdscr, py_row, rx + 3, "─" * (right_panel_width - 6), c_blue)
-                py_row += 1
-                b_diff = self.engine.bedtime_diff
-                if b_diff > 0:
-                    bh = b_diff // 3600
-                    bm = (b_diff % 3600) // 60
-                    bs = b_diff % 60
-                    if bh > 0:
-                        bt_str = f"{bh}j {bm}m lagi"
-                    else:
-                        bt_str = f"{bm}m {bs}s lagi"
-                    cd_color = c_yellow | curses.A_BOLD if b_diff <= 1800 else c_white
-                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Tidur ({self.engine.bedtime}):", c_yellow)
+            self._safe_addstr(stdscr, py_row, rx + 3, "─" * (right_panel_width - 6), c_blue)
+            py_row += 1
+
+            if t_type == "study_end":
+                if diff > 0:
+                    sh = diff // 3600
+                    sm = (diff % 3600) // 60
+                    ss = diff % 60
+                    cd_str = f"{sh}j {sm}m lagi" if sh > 0 else f"{sm}m {ss}s lagi"
+                    cd_color = c_yellow | curses.A_BOLD if diff <= 1800 else c_cyan
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"⚔ Selesai ({t_str}):", c_cyan)
                     py_row += 1
-                    self._safe_addstr(stdscr, py_row, rx + 3, f">> {bt_str}", cd_color)
-                elif b_diff >= -3600:
-                    late_m = max(1, abs(b_diff) // 60)
-                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Waktu Tidur! ({self.engine.bedtime})", c_red | curses.A_BOLD)
+                    self._safe_addstr(stdscr, py_row, rx + 3, f">> {cd_str}", cd_color)
+                elif diff >= -3600:
+                    late_m = max(1, abs(diff) // 60)
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"⚔ Selesai! ({t_str})", c_green | curses.A_BOLD)
+                    py_row += 1
+                    self._safe_addstr(stdscr, py_row, rx + 3, f">> Lewat {late_m}m! Istirahatlah", c_green)
+                else:
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"⚔ Selesai: {t_str}", c_white)
+            elif t_type == "bedtime":
+                if diff > 0:
+                    bh = diff // 3600
+                    bm = (diff % 3600) // 60
+                    bs = diff % 60
+                    cd_str = f"{bh}j {bm}m lagi" if bh > 0 else f"{bm}m {bs}s lagi"
+                    cd_color = c_yellow | curses.A_BOLD if diff <= 1800 else c_white
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Tidur ({t_str}):", c_yellow)
+                    py_row += 1
+                    self._safe_addstr(stdscr, py_row, rx + 3, f">> {cd_str}", cd_color)
+                elif diff >= -3600:
+                    late_m = max(1, abs(diff) // 60)
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Waktu Tidur! ({t_str})", c_red | curses.A_BOLD)
                     py_row += 1
                     self._safe_addstr(stdscr, py_row, rx + 3, f">> Lewat {late_m}m! Segera tidur", c_red)
                 else:
-                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Jam Tidur: {self.engine.bedtime}", c_white)
-
+                    self._safe_addstr(stdscr, py_row, rx + 3, f"🌙 Jam Tidur: {t_str}", c_white)
         # Status log di bawah panel
         log_y = panel_y + panel_height
         if log_y < max_y - 2:
@@ -396,7 +444,7 @@ class EulaTimerUI:
             help_y = max_y - 2
             help_text = (
                 "[Spasi] Mulai/Jeda  [r] Reset  [s] Skip  [+/-] Belajar  "
-                "[b/B] Istirahat  [t/T] Jam Tidur  [c] Kota  [q] Keluar"
+                "[b/B] Istirahat  [e/E] Selesai  [t/T] Jam Tidur  [c] Kota  [q] Keluar"
             )
             self._safe_addstr(stdscr, help_y, 2, help_text, c_mag)
 

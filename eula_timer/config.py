@@ -23,6 +23,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "sound_enabled": True,
     "notify_enabled": True,
     "advance_prayer_reminder_minutes": 5,  # Pengingat 5 menit sebelum waktu sholat
+    "study_end_time": "17:00",  # Jam selesai belajar (default 5 sore / 17:00)
+    "study_end_enabled": True,  # Aktifkan pengingat selesai belajar
+    "study_end_reminders": [30, 15, 5],  # Pengingat menit sebelum jam selesai belajar
     "bedtime": "22:00",  # Jam tidur (default 10 malam / 22:00)
     "bedtime_enabled": True,  # Aktifkan pengingat jam tidur
     "bedtime_reminders": [30, 20, 10, 5],  # Pengingat menit sebelum jam tidur

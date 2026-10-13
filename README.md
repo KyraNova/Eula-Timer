@@ -19,6 +19,11 @@
   - Jam tidur standar jam 10 malam (`22:00`) yang dapat dikustomisasi.
   - Notifikasi berkala saat mendekati jam tidur: 30 menit, 20 menit, 10 menit, dan 5 menit sebelum waktu tidur.
   - Peringatan tegas saat tepat jam tidur dan teguran jika masih begadang lewat jam tidur.
+- **Pengingat Jadwal Selesai Belajar (Study End Reminder)**:
+  - Target jam selesai belajar standar jam 5 sore (`17:00`) yang dapat dikustomisasi.
+  - Peringatan berkala menjelang sesi belajar berakhir: 30 menit, 15 menit, dan 5 menit sebelum waktu selesai.
+  - Notifikasi dan alarm tepat pukul 17:00 untuk menyudahi belajar dan mulai beristirahat.
+  - Peringatan lembur jika pengguna masih memaksa belajar melewati batas waktu yang ditentukan.
 - **Desktop & Audio Alerts**:
   - Mengirim notifikasi visual sistem melalui `notify-send`.
   - Membunyikan nada chime ramah telinga melalui `paplay` (PulseAudio/PipeWire) atau `mpv`.
@@ -40,6 +45,8 @@
 | `c` / `C` | Ganti kota / lokasi jadwal sholat (contoh: Jakarta, Bandung, Surabaya) |
 | `t` | Atur jam tidur (format `HH:MM`, ketik `off` untuk mematikan) |
 | `T` | Toggle aktif / nonaktif pengingat jam tidur |
+| `e` | Atur jam selesai belajar (format `HH:MM`, ketik `off` untuk mematikan) |
+| `E` | Toggle aktif / nonaktif pengingat jadwal selesai belajar |
 | `f` / `F` | Muat ulang paksa (force refresh) jadwal sholat dari internet |
 | `m` / `M` | Matikan / nyalakan suara alert (Mute toggle) |
 | `n` / `N` | Matikan / nyalakan notifikasi desktop (Notify toggle) |
@@ -65,6 +72,12 @@ eula-timer -s
 
 # Mengatur target jam tidur ke jam 22:00 atau jam lainnya
 eula-timer -t 22:00
+
+# Mengatur jadwal selesai belajar ke jam 17:00 atau jam lainnya
+eula-timer -e 17:00
+
+# Menonaktifkan pengingat selesai belajar
+eula-timer --no-study-end
 
 # Menonaktifkan pengingat jam tidur
 eula-timer --no-bedtime

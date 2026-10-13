@@ -18,6 +18,8 @@ SOUND_MAP = {
     "bell": "/usr/share/sounds/freedesktop/stereo/bell.oga",
     "bedtime": "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
     "bedtime_advance": "/usr/share/sounds/freedesktop/stereo/message.oga",
+    "study_end": "/usr/share/sounds/freedesktop/stereo/complete.oga",
+    "study_end_advance": "/usr/share/sounds/freedesktop/stereo/message.oga",
 }
 
 
@@ -224,3 +226,82 @@ def notify_bedtime_overdue(
         enabled=notify_enabled,
     )
     play_sound("bedtime", enabled=sound_enabled)
+
+
+def notify_study_end_advance(
+    minutes_left: int,
+    study_end_str: str = "17:00",
+    sound_enabled: bool = True,
+    notify_enabled: bool = True,
+) -> None:
+    """Dipanggil beberapa menit menjelang waktu belajar selesai (30m, 15m, 10m, 5m)."""
+    messages = {
+        30: (
+            f"Jadwal selesai belajar ({study_end_str}) tinggal 30 menit lagi! "
+            "Mulai tuntaskan materi terakhirmu dan rapikan catatan. Jangan sampai molor, atau dendam ini akan kuingat!"
+        ),
+        15: (
+            f"Tersisa 15 menit sebelum waktu belajarmu selesai ({study_end_str})! "
+            "Segera simpan catatan dan rangkum apa yang kamu pelajari. Disiplin waktu adalah tanda ksatria sejati."
+        ),
+        10: (
+            f"Tinggal 10 menit menuju akhir sesi belajar ({study_end_str})! "
+            "Jangan mulai topik baru lagi. Bersiaplah menyudahi belajar tepat waktu!"
+        ),
+        5: (
+            f"Hanya 5 menit lagi sebelum jam {study_end_str}! "
+            "Tutup bukumu dan bersiaplah istirahat. Aku tidak akan membiarkanmu beralasan 'sedikit lagi'!"
+        ),
+    }
+    msg = messages.get(
+        minutes_left,
+        f"Jadwal belajar selesai ({study_end_str}) tinggal {minutes_left} menit lagi! Rapikan pekerjaanmu dan bersiaplah istirahat.",
+    )
+    send_notification(
+        title=f"⚔️ Pengingat Selesai Belajar: {minutes_left} Menit Lagi ({study_end_str})",
+        message=msg,
+        urgency="normal" if minutes_left > 10 else "critical",
+        icon="appointment-soon",
+        enabled=notify_enabled,
+    )
+    play_sound("study_end_advance", enabled=sound_enabled)
+
+
+def notify_study_end(
+    study_end_str: str = "17:00",
+    sound_enabled: bool = True,
+    notify_enabled: bool = True,
+) -> None:
+    """Dipanggil tepat saat jam belajar selesai (pukul 17:00 / jam 5 sore)."""
+    send_notification(
+        title=f"⚔️ Waktu Belajar Selesai! ({study_end_str})",
+        message=(
+            f"Sudah pukul {study_end_str}! Jadwal belajarmu hari ini resmi selesai! "
+            "Tutup buku dan komputermu sekarang juga, lalu istirahatkan pikiranmu. "
+            "Kerja bagus untuk hari ini... tapi jangan salah paham! Kalau kamu sampai jatuh sakit karena kelelahan memaksakan diri, siapa yang akan membalas dendamku nanti?!"
+        ),
+        urgency="critical",
+        icon="alarm",
+        enabled=notify_enabled,
+    )
+    play_sound("study_end", enabled=sound_enabled)
+
+
+def notify_study_end_overdue(
+    minutes_late: int,
+    study_end_str: str = "17:00",
+    sound_enabled: bool = True,
+    notify_enabled: bool = True,
+) -> None:
+    """Dipanggil jika pengguna masih aktif belajar lewat dari jadwal selesai."""
+    send_notification(
+        title=f"⚔️ Peringatan: Masih Belajar Lewat Jam {study_end_str}! (+{minutes_late}m)",
+        message=(
+            f"Kamu masih belum berhenti belajar padahal sudah lewat {minutes_late} menit dari pukul {study_end_str}?! "
+            "Kelancangan macam apa ini... Segera beristirahat sekarang juga! Jangan berani-berani melanggar jadwal yang sudah kita tentukan, atau dendam ini sungguh akan kubalas!"
+        ),
+        urgency="critical",
+        icon="alarm",
+        enabled=notify_enabled,
+    )
+    play_sound("study_end", enabled=sound_enabled)
